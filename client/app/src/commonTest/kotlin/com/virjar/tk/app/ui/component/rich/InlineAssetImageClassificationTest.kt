@@ -33,7 +33,7 @@ class InlineAssetImageClassificationTest {
         )
         assertTrue(
             blocks.none { it is DocumentOpaqueRawBlock },
-            "不应出现未建模错误卡, 实际: ${blocks.map { it.javaClass.simpleName }}",
+            "不应出现未建模错误卡, 实际: ${blocks.map { it::class.simpleName }}",
         )
     }
 
@@ -45,7 +45,7 @@ class InlineAssetImageClassificationTest {
         val blocks = DocumentMarkdownBlockCodec.parse(list, listOf(asset(assetId)))
         assertTrue(
             blocks.none { it is DocumentOpaqueRawBlock },
-            "列表不应整体降级, 实际: ${blocks.map { it.javaClass.simpleName }}",
+            "列表不应整体降级, 实际: ${blocks.map { it::class.simpleName }}",
         )
     }
 
