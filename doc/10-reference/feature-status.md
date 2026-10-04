@@ -297,7 +297,7 @@ Android“设置 → 本地存储”保留登录信息，先保存草稿并暂�
 | 后台维护与健康检查 | 可用 | `MaintenanceRuntime` 统一持有定期维护任务；关键任务意外停止使 `/health` 返回 `DOWN` / HTTP 503。任务归属与诊断见[可观测性](../07-operations/observability.md) |
 | 管理后台 | 可用 | 用户、群、消息、日志、组织与机器人管理；单实例管理员凭据持久化、主动轮换、会话吊销/服务端退出和有界必要审计，支持显式受控恢复。真实 PostgreSQL/HTTP 回归覆盖轮换、重启、拒绝分类和审计失败；浏览器验证登录、凭据表单、会话与审计展示、退出，未覆盖浏览器内密码轮换。没有多管理员角色或长期审计归档，见[搜索与管理](../06-server/search-and-admin.md#5-管理后台)。 |
 | 管理台构建输入 | 可用 | Git 只保留管理台源码、依赖清单与锁文件；node_modules/dist 不参与源码跟踪，Server 在隔离 build 工作区构建。`checkArchitecture` 拒绝重新跟踪产物。 |
-| 统一发行工具链（含客户端发布注册中心） | 部分 | 根版本、人工说明和冻结协议快照进入 Gradle 校验；`release` 密封 Android、四目标桌面产物（壳/负载/安装器）、Server 与 Headless ZIP，可向本地、注册中心 API（`site`，本机 `TEAMTALK_CLIENT_RELEASE_TOKEN`）和 GitHub 交付，CI 只构建并发布 GitHub，官网注册中心由维护者用同一密封包本机上传；服务器仍人工部署。服务端发布注册中心提供通道（stable/preview/snapshot）、停用、回滚与 kill-switch，首页 `/#download` 直接展示注册中心的六目标制品、通道与版本记录，`android.json` 兼容旧客户端。桌面应用内更新为文件级增量（壳/负载分离，`client/desktop-bootstrap` + `client/shared` 更新器）；无头 `tt-agent upgrade` 在线升级。私有首次分发可用 `private-first`；`snapshot` 按源码身份保留不可变发布，通道指针切换到新记录，desktopRevision 从完整 first-parent 历史自动计算。CI 要求展示版本与根构建号一起推进才正式发行，不自动刷 snapshot。Conveyor 与 jpackage 路径已移除；Windows/Linux 产物与 GUI 连续升级仍需按平台实际验收，见[客户端发布与更新体系](../07-operations/client-releases.md)。 |
+| 统一发行工具链（含客户端发布注册中心） | 部分 | 根版本、人工说明和冻结协议快照进入 Gradle 校验；`release` 密封 Android、四目标桌面产物（壳/负载/安装器）、Server 与 Headless ZIP，可向本地、注册中心 API（`site`，本机 `TEAMTALK_CLIENT_RELEASE_TOKEN`）和 GitHub 交付，CI 只构建并发布 GitHub，官网注册中心由维护者用同一密封包本机上传；服务器仍人工部署。服务端发布注册中心提供通道（stable/preview/snapshot）、停用、回滚与 kill-switch，首页 `/#download` 直接展示注册中心的六目标制品、通道与版本记录，`android.json` 兼容旧客户端。桌面应用内更新为文件级增量（壳/负载分离，`client/desktop-bootstrap` + `client/shared` 更新器）；无头 `tt-agent upgrade` 在线升级。私有首次分发可用 `private-first`；`snapshot` 按源码身份保留不可变发布，通道指针切换到新记录，desktopRevision 从完整 first-parent 历史自动计算；快照通道按发布令牌判定最新（每次发布随机令牌，最后发布者赢，不比较版本号）。CI 要求展示版本与根构建号一起推进才正式发行，不自动刷 snapshot。Conveyor 与 jpackage 路径已移除；Windows/Linux 产物与 GUI 连续升级仍需按平台实际验收，见[客户端发布与更新体系](../07-operations/client-releases.md)。 |
 | 公版与私有客户端共存 | 可用 | `DeploymentConfig.client` 统一生成 Android 安装 ID、Desktop 安装身份与名称；主仓库默认公版，私有独立 clone 使用 Git 忽略的完整 local 配置目录，随 `buildSrc` 编译。双端数据、登录与主题独立，Desktop 单实例锁跟随数据目录。私有站点提供 Android APK，桌面/无头更新经各自 `serverUrl` 的发布注册中心（应用内增量 / tt-agent upgrade）。默认公版保留原身份与目录。层级 `DeploymentDsl` 构造 `DeploymentConfig` 供双端 Gradle 使用；目标平台安装、通知跳转与连续升级仍须按发行实际验收，见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。 |
 | 客户端结构化遥测与定向诊断 | 可用 | 有界客户端遥测、设备策略与定向诊断已接通；诊断数据不作为消息可靠事实。细节见下方同名说明。 |
 | 私有化部署参数 | 可用 | Kotlin 配置统一生成客户端、部署和验收坐标；HTTP 与 TCP TLS 独立，支持 IP + HTTP + 自签 TCP 证书。Gradle 生成并复用证书，客户端使用专用证书信任并验证 SAN；普通升级保留数据、证书与私钥。配置与 TLS 测试入口为 `TcpTlsCertificatesTest`、`TlsDeploymentPreflightTest` 与 `ClientTransportTlsTest`。具体见[传输配置边界](../07-operations/configuration.md#传输配置边界)；目标实例和同批发行制品仍须实际验收，证书及其他 secret 轮换归 REL-03，迁移、备份与完整发行验收仍按发布基线执行。 |
@@ -406,7 +406,8 @@ API 35 的一套 16 KB 模拟器出现过 ART 原生崩溃，持续观察通过�
 <summary>类型化办公对象引用：实现边界与验收入口</summary>
 
 Task 使用独立 `TASK_REF(18)`，不扩展已冻结的 `OfficeRefBody`；发送时重新验证可读性并构造预览，
-打开时优先调用 `task.details`，旧服务器回落 `task.get`。低版本 RPC 消息读取返回保留消息身份与序号的富文本占位；旧事件读取推进游标，
+打开时优先调用 `task.details`，旧服务器回落 `task.get`。低版本客户端读取到不认识的消息时获得保留身份与类型码的投影占位（剥正文、打
+`FLAG_PROJECTION_PLACEHOLDER`，渲染"当前版本不支持此消息"，升级后自愈）；旧事件同样投影为占位，
 不会解码未知消息体。双端聊天附件面板和任务详情分享均进入已有可靠消息发件箱。
 
 消息以 `OFFICE_REF(17)` 引用指向 Document 与群共享文件：MessageBody 只保存引用与服务端发送时重建的预览快照（title/subtitle 权威覆盖客户端声明），不承载权威内容。发送时 `OfficeRefResolver` 直接调用办公领域读入口，校验对象存在与发送者读权限，断链/无权/删除/归档在 ACK 前拒绝；打开时经 `DocumentRpc.getDocument` / `GroupFileRpc.getEntry(8)` 重校验当前权限，撤权/删除后冻结快照仍可读并给"内容不可访问或已被删除"降级；转发只复制冻结快照不重建不扩权。双端附件面板提供"文档"（最近文档选择器）与"群文件"（仅群聊，当前群根目录）入口，并支持引用卡片渲染与点击导航

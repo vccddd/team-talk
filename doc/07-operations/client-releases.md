@@ -28,12 +28,16 @@
   （正式 = buildNumber+1；snapshot = 提交历史推导，区分同展示版本的源码构建）；android =
   versionCode（buildNumber+1）；headless = releaseBuildNumber。`buildIdentity` 记录展示版本与完整源码 SHA；同号 snapshot
   仍能被识别为新的更新，不能只比较 version/build。
+- **快照通道令牌判定（0.0.6 起）**：快照通道不按版本号判断"已是最新"——每次快照发布生成随机
+  令牌（`snapshot_token` 列），经 manifest 下发、客户端持久化并在检查时回传（`snapshotToken`
+  参数）。令牌一致才 UP_TO_DATE；未回传（旧客户端）或不同（最后发布者赢）一律推送，历史重写、
+  同版本覆盖发布都不依赖单调性。正式通道（无令牌）沿用版本号判定。
 
 ## 2. 公开端点（只读，与旧静态下载同级信任）
 
 | 端点 | 用途 |
 |---|---|
-| `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=&buildIdentity=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息 |
+| `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=&buildIdentity=&snapshotToken=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息。快照通道按回传 `snapshotToken` 是否等于当前发布令牌判定（见上节） |
 | `GET /api/v1/client/releases/{id}/manifest.json` | 负载文件清单（path/sha256/size） |
 | `GET/HEAD /api/v1/client/files/{sha256}` | 内容寻址制品；GET 支持 Range，HEAD 返回全长且无正文，immutable 缓存 |
 | `GET /api/v1/public/downloads` | 首页下载区的数据源：当前通道制品与最近版本记录 |

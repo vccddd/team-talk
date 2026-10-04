@@ -69,9 +69,10 @@
 
 ### 05 · 客户端
 
-解释共享 UI 与平台壳的边界、Desktop/Android/iOS 交互模型、设计语言和富文本体系。
+解释共享 UI 与平台壳的边界、1:1 音视频通话、Desktop/Android/iOS 交互模型、设计语言和富文本体系。
 
 - [客户端总览](05-clients/README.md)
+- [1:1 通话](05-clients/calls.md)
 - [Desktop](05-clients/desktop.md)
 - [Android](05-clients/android.md)
 - [iOS](05-clients/ios.md)

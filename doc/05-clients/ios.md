@@ -3,7 +3,7 @@
 iOS 使用 `client/ios` 平台壳，复用 `app` 的业务页面、ViewModel 和编辑器，以及 `shared` 的
 ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、系统生命周期和 APNs 回调。
 最低系统为 iOS 16，包含 iPhone/iPad。iOS 已通过 Apple Silicon 模拟器全链路验收，列为
-开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不属于已发行 0.0.5 的制品范围。
+开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不随正式发行分发制品。
 
 ## 源码与平台边界
 
