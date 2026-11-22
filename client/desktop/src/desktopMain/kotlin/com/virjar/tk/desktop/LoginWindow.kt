@@ -418,6 +418,13 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     val suffix = if (unreadTotal > 0) " ($unreadTotal 条未读)" else ""
                     AppTray.setTooltip("${ClientIdentity.DISPLAY_NAME} - $status$suffix")
                 }
+                var wasWindowFocused by remember(session) { mutableStateOf(true) }
+                LaunchedEffect(windowFocused) {
+                    if (windowFocused && !wasWindowFocused) {
+                        session.reconnectNowIfDisconnected()
+                    }
+                    wasWindowFocused = windowFocused
+                }
                 val windowReadActive = isDesktopWindowActive(windowVisible, windowFocused)
                 val notificationWindowActive = isDesktopWindowActive(windowVisible, appAnyWindowFocused)
                 DesktopTaskNotifications(desktopNav, presentationGate, notificationWindowActive, connectionState)
@@ -477,8 +484,12 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         }
                     }
                 }
-                DisposableEffect(window, sessionUiActions) {
-                    val activation = installDesktopWindowActivation(window, onReopen = showMainWindow) {
+                DisposableEffect(window, sessionUiActions, session) {
+                    val activation = installDesktopWindowActivation(
+                        window = window,
+                        onReopen = showMainWindow,
+                        onWake = { session.reconnectNowIfDisconnected() },
+                    ) {
                         sessionUiActions.dispatchUi {
                             if (windowVisible && !mainWindowState.isMinimized && window.isVisible) {
                                 window.bringToForeground()
