@@ -1,0 +1,281 @@
+name: Build All Clients
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_mode:
+        description: 构建分发模式（公开 Fork 与私有内测保持 snapshot；新私有应用首次出包可选 private-first）
+        required: true
+        default: snapshot
+        type: choice
+        options:
+          - snapshot
+          - private-first
+      build_ios_simulator:
+        description: 同时在 macos-15 Runner 上构建免签名 iOS 模拟器安装包
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches:
+      - fix/im-ux-push-waterfall-read
+      - 'release-ci/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-clients-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-clients:
+    name: Build Desktop (Mac/Win/Linux), Android & Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GITHUB_REPO_PRIVATE: ${{ github.event.repository.private }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5.0.2
+        with:
+          gradle-home-cache-includes: |
+            caches
+            notifications
+            teamtalk-tools
+
+      - name: Unpack private client configuration (private repos only)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_1: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_1 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_2: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_2 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_3: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_3 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_4: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_4 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_5: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_5 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_6: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_6 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_7: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_7 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_8: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_8 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_9: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_9 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_10: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_10 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_11: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_11 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_12: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_12 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_13: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_13 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_14: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_14 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_15: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_15 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_16: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_16 }}
+        run: python3 scripts/ci/private_client_ci_bundle.py unpack
+
+      - name: Ensure Android SDK platform & build-tools for APK assembly and verification
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --install "platforms;android-36" "build-tools;36.0.0"'
+
+      - name: Install NSIS for Windows setup.exe cross-packaging
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis
+
+      - name: Provide Android release signing identity (private repos only)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TEAMTALK_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TEAMTALK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TEAMTALK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+
+          raw_ks = os.environ.get('ANDROID_KEYSTORE_BASE64', '').strip()
+          if raw_ks:
+              if os.environ.get('GITHUB_REPO_PRIVATE', '').lower() != 'true':
+                  raise SystemExit('Refusing Android release keystore on a non-private repository')
+              keystore = Path(os.environ['RUNNER_TEMP']) / 'teamtalk-android.jks'
+              keystore.parent.mkdir(parents=True, exist_ok=True)
+              keystore.write_bytes(base64.b64decode(raw_ks, validate=True))
+              keystore.chmod(0o600)
+              with open(os.environ['GITHUB_ENV'], 'a') as env_file:
+                  env_file.write(f'TEAMTALK_ANDROID_KEYSTORE={keystore}\n')
+                  for key in ('TEAMTALK_ANDROID_STORE_PASSWORD', 'TEAMTALK_ANDROID_KEY_ALIAS', 'TEAMTALK_ANDROID_KEY_PASSWORD'):
+                      val = os.environ.get(key, '')
+                      if val:
+                          env_file.write(f'{key}={val}\n')
+          PY
+
+      - name: Build and verify sealed multi-platform client bundle
+        env:
+          RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.release_mode || 'snapshot' }}
+        run: ./gradlew --max-workers=2 buildRelease -PreleaseMode="${RELEASE_MODE}" -PreleaseTargets=local --stacktrace
+
+      - name: Organize per-platform client installers for download
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+
+          manifests = list(Path('build/snapshots').rglob('release-manifest.json')) + \
+                      list(Path('build/private-distributions').rglob('release-manifest.json'))
+          if not manifests:
+              raise SystemExit('No release-manifest.json found under build/snapshots or build/private-distributions')
+          bundle_dir = manifests[0].parent
+          print(f'Sealed bundle: {bundle_dir}')
+          meta = json.loads(manifests[0].read_text(encoding='utf-8'))
+          print(f'Build identity: {meta.get("buildIdentity")} ({meta.get("distributionKind")})')
+
+          stage_root = Path(os.environ['RUNNER_TEMP']) / 'client-artifacts'
+          mapping = {
+              'macos-aarch64': [bundle_dir / 'desktop' / 'macos-aarch64'],
+              'macos-amd64': [bundle_dir / 'desktop' / 'macos-amd64'],
+              'windows-amd64': [bundle_dir / 'desktop' / 'windows-amd64'],
+              'linux-amd64': [bundle_dir / 'desktop' / 'linux-amd64'],
+              'android': [f for f in (bundle_dir / 'assets').glob('*') if f.name.endswith('.apk') or f.name == 'mapping.txt'],
+              'server-and-headless': (
+                  [f for f in (bundle_dir / 'assets').glob('*') if f.name.endswith('-server.zip') or '-headless-' in f.name] +
+                  [bundle_dir / name for name in ('RELEASE_NOTES.md', 'COMMITS.md', 'SHA256SUMS', 'release-manifest.json', 'deployment-config.json') if (bundle_dir / name).is_file()]
+              ),
+          }
+          for group, sources in mapping.items():
+              target = stage_root / group
+              target.mkdir(parents=True, exist_ok=True)
+              for src in sources:
+                  if src.is_dir():
+                      for child in src.iterdir():
+                          if child.is_file():
+                              shutil.copy2(child, target / child.name)
+                  elif src.is_file():
+                      shutil.copy2(src, target / src.name)
+              files = sorted(p.name for p in target.iterdir())
+              print(f'Artifact group [{group}]: {files}')
+          PY
+
+      - name: Upload macOS Apple Silicon client (arm64)
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-macos-aarch64
+          path: ${{ runner.temp }}/client-artifacts/macos-aarch64/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload macOS Intel client (x86_64)
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-macos-amd64
+          path: ${{ runner.temp }}/client-artifacts/macos-amd64/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Windows client (NSIS installer & portable)
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-windows-amd64
+          path: ${{ runner.temp }}/client-artifacts/windows-amd64/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Linux client (.deb & .tar.gz)
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-linux-amd64
+          path: ${{ runner.temp }}/client-artifacts/linux-amd64/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Android APK & R8 mapping
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-android-apk
+          path: ${{ runner.temp }}/client-artifacts/android/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Server, Headless CLI & build manifests
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-server-and-headless
+          path: ${{ runner.temp }}/client-artifacts/server-and-headless/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          if [ -n "${TEAMTALK_ANDROID_KEYSTORE:-}" ] && [ -f "$TEAMTALK_ANDROID_KEYSTORE" ]; then
+            rm -f "$TEAMTALK_ANDROID_KEYSTORE"
+          fi
+
+  build-ios-simulator:
+    name: Build iOS Simulator App (arm64)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_ios_simulator }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2
+      GITHUB_REPO_PRIVATE: ${{ github.event.repository.private }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5.0.2
+
+      - name: Unpack private client configuration (private repos only)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_1: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_1 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_2: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_2 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_3: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_3 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_4: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_4 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_5: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_5 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_6: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_6 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_7: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_7 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_8: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_8 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_9: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_9 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_10: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_10 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_11: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_11 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_12: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_12 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_13: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_13 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_14: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_14 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_15: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_15 }}
+          TEAMTALK_CLIENT_BUNDLE_B64_16: ${{ secrets.TEAMTALK_CLIENT_BUNDLE_B64_16 }}
+        run: python3 scripts/ci/private_client_ci_bundle.py unpack
+
+      - name: Generate iOS Xcode configuration from selected deployment config
+        run: ./gradlew :client:ios:generateXcodeConfiguration --stacktrace
+
+      - name: Build unsigned iOS Simulator application
+        run: |
+          set -o pipefail
+          xcodebuild -project client/ios/TeamTalk.xcodeproj -scheme TeamTalk \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath client/ios/build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build 2>&1 | tee "$RUNNER_TEMP/teamtalk-ios-sim-build.log"
+          APP_BUNDLE=$(find client/ios/build/DerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -n 1)
+          test -d "$APP_BUNDLE"
+          mkdir -p "$RUNNER_TEMP/ios-simulator-artifact"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$RUNNER_TEMP/ios-simulator-artifact/TeamTalk-ios-simulator-arm64.app.zip"
+
+      - name: Upload iOS Simulator application
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-ios-simulator-arm64
+          path: ${{ runner.temp }}/ios-simulator-artifact/TeamTalk-ios-simulator-arm64.app.zip
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload iOS build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: TeamTalk-ios-simulator-build-log
+          path: ${{ runner.temp }}/teamtalk-ios-sim-build.log
+          if-no-files-found: ignore
+          retention-days: 7
